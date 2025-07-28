@@ -47,6 +47,11 @@ class AutocompleteResponse(BaseModel):
 class ErrorResponse(BaseModel):
     error: str
 
+class IngredientSearchRequest(BaseModel):
+    ingredients: List[str]
+
+class IngredientSearchResponse(BaseModel):
+    matched_ingredients: Dict[str, str]
 
 # ENDPOINTS
 @app.post("/api/nutrition", response_model=NutritionResponse)
@@ -146,6 +151,29 @@ async def get_aggregated_nutrition(request: DishListRequest):
             print(f"Connection error to Flask backend: {e}")
             raise HTTPException(status_code=503, detail="Backend service unavailable")
 
+@app.post("/api/ingredient_search", response_model=IngredientSearchResponse)
+async def search_ingredients(request: IngredientSearchRequest):
+    """
+    Get nearest ingredient matches for a list of ingredients
+    """
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.post(
+                f"{FLASK_BACKEND_URL}/ingredient_search",
+                json={"ingredients": request.ingredients},
+                timeout=30.0
+            )
+            
+            if response.status_code == 404:
+                raise HTTPException(status_code=404, detail=response.json()["error"])
+            elif response.status_code != 200:
+                raise HTTPException(status_code=500, detail="Backend service error")
+                
+            matched_ingredients = response.json()
+            return IngredientSearchResponse(matched_ingredients=matched_ingredients)
+            
+        except httpx.RequestError:
+            raise HTTPException(status_code=503, detail="Backend service unavailable")
 
 @app.get("/health")
 async def health_check():
