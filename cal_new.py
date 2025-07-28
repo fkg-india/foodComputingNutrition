@@ -12,16 +12,28 @@ import re
 import requests
 import pandas as pd
 from flask import Flask, request, jsonify
+import math
 
 app = Flask(__name__)
 
-RECIPES_PATH = r"C:\Users\Anurav\Research\FoodComputing\fkg.in-apps-calculator\cal\recipes.pkl" # PATH TO PKL (see misc to get pkl from jsonl)
-UNITS_PATH = r"C:\Users\Anurav\Research\FoodComputing\fkg.in-apps-calculator\cal\units.xlsx" 
-INGREDIENTS_PATH = r"C:\Users\Anurav\Research\FoodComputing\fkg.in-apps-calculator\cal\fct.xlsx"
+RECIPES_PATH = r"C:\Users\Anurav\Research\FoodComputing\foodComputingNutrition-main\foodComputingNutrition-main\recipes.pkl" # PATH TO PKL (see misc to get pkl from jsonl)
+UNITS_PATH = r"C:\Users\Anurav\Research\FoodComputing\foodComputingNutrition-main\foodComputingNutrition-main\units.xlsx" 
+INGREDIENTS_PATH = r"C:\Users\Anurav\Research\FoodComputing\foodComputingNutrition-main\foodComputingNutrition-main\fct.xlsx"
 
 recipes_df = pd.read_pickle(RECIPES_PATH)
 units_df = pd.read_excel(UNITS_PATH)
 nutrition_df = pd.read_excel(INGREDIENTS_PATH)
+
+def clean_nan_values(obj):
+    if isinstance(obj, dict):
+        return {key: clean_nan_values(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [clean_nan_values(item) for item in obj]
+    elif isinstance(obj, float) and math.isnan(obj):
+        return 0.0  
+    else:
+        return obj
+
 
 def nutritionix(ingredient):
     url = 'https://trackapi.nutritionix.com/v2/natural/nutrients'
@@ -359,14 +371,14 @@ def get_dish_nutrition():
     print(f"Received request for dish: '{dish_name}'")
 
     nutrition_info = calculate_nutrition_for_dish(dish_name)
-    # add a step to write nutrition_df to excel file
-
+    nutrition_df.to_excel(INGREDIENTS_PATH, index=False)
+    
     if not nutrition_info:
         return jsonify({"error": f"No nutrition data found for dish: '{dish_name}'"}), 404
 
     return jsonify({
         "matched_dish_name": match_recipe(dish_name, recipes_df),
-        "nutrition_per_serving": nutrition_info
+        "nutrition_per_serving": clean_nan_values(nutrition_info)
     })
 
 
@@ -437,7 +449,7 @@ def agg_nutrition():
 
     for dish in dishes: 
         nutrition_info = calculate_nutrition_for_dish(dish)
-        # add a step to write nutrition_df to excel file
+        nutrition_df.to_excel(INGREDIENTS_PATH, index=False)
 
         if not nutrition_info: skipped.append(dish)
         else: 
@@ -447,11 +459,13 @@ def agg_nutrition():
 
     matched_dish_names = {dish:match_recipe(dish, recipes_df) for dish in dishes}
 
-    return jsonify({
-            "matched_dish_names": matched_dish_names,
-            "nutrition_per_serving": total_nutrition_info,
-            "skipped_dishes": skipped
-        })
+    response_data = {
+        "matched_dish_names": clean_nan_values(matched_dish_names),
+        "nutrition_per_serving": clean_nan_values(total_nutrition_info),
+        "skipped_dishes": skipped
+    }
+
+    return response_data
 
 
 # --- Main Execution ---
