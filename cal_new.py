@@ -467,6 +467,16 @@ def agg_nutrition():
 
     return response_data
 
+@app.route('/ingredient_search', methods=['POST'])
+def search_ingredient():
+    """API endopint to fetch nearest ingredient match"""
+    data = request.get_json()
+    if not data or 'ingredients' not in data:
+        return jsonify({"error: Invalid requst. 'ingredients' not found in JSON body"})
+    
+    ings = data['ingredients']
+    matched_dict = {ing: find_ingredient(ing) for ing in ings}
+    return matched_dict
 
 # --- Main Execution ---
 if __name__ == '__main__':
