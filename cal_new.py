@@ -13,16 +13,35 @@ import requests
 import pandas as pd
 from flask import Flask, request, jsonify
 import math
+from word2number import w2n
+
 
 app = Flask(__name__)
 
 RECIPES_PATH = r"C:\Users\Anurav\Research\FoodComputing\foodComputingNutrition-main\foodComputingNutrition-main\recipes.pkl" # PATH TO PKL (see misc to get pkl from jsonl)
 UNITS_PATH = r"C:\Users\Anurav\Research\FoodComputing\foodComputingNutrition-main\foodComputingNutrition-main\units.xlsx" 
 INGREDIENTS_PATH = r"C:\Users\Anurav\Research\FoodComputing\foodComputingNutrition-main\foodComputingNutrition-main\fct.xlsx"
+PRECALCULATED_PATH = r"C:\Users\Anurav\Research\FoodComputing\master_dishes_nutrition_per_100g.xlsx"
 
 recipes_df = pd.read_pickle(RECIPES_PATH)
 units_df = pd.read_excel(UNITS_PATH)
 nutrition_df = pd.read_excel(INGREDIENTS_PATH)
+precalculated_df = pd.read_excel(PRECALCULATED_PATH)
+
+def convert_units_df(units_df):
+    df = units_df.copy()
+
+    text_to_list_cols = ['unit', 'alt_names', 'associated_ingredient']
+
+    for col in text_to_list_cols:
+        if col in df.columns:
+            df[col] = df[col].fillna('').apply(lambda x: [item.strip() for item in x.split(',') if item.strip()])
+        
+    df['unit'] = df['unit'] + df['alt_names']
+    df = df.drop(columns=['alt_names'])
+    return df
+
+units_df = convert_units_df(units_df=units_df)
 
 def clean_nan_values(obj):
     if isinstance(obj, dict):
@@ -58,7 +77,7 @@ def nutritionix(ingredient):
 
     # --- Process the successful response ---
     food_data = data['foods'][0]
-    print(food_data)
+    print(f"Made a nutritionix call for {ingredient}")
 
     nutrient_map = {
         208: 'Energy; enerc', 204: 'Total Fat; fatce', 606: 'Saturated Fatty acids; fasat',
@@ -122,12 +141,8 @@ def smart_score(query, choice, **kwargs):
 def match_recipe(dish_name, dishes_df):
     recipe_names = list(dishes_df['name'])
     
-    best_match, score, _ = process.extractOne(
-        dish_name, recipe_names, scorer=smart_score
-    )
-    
-    # print(best_match, score, _)
-
+    best_match, score, _ = process.extractOne(dish_name, recipe_names, scorer=smart_score)
+  
     if score < 75:
         print(f'Found no matching dish for {dish_name} in database. Closest match is {best_match}')
         return None
@@ -135,6 +150,17 @@ def match_recipe(dish_name, dishes_df):
         print(f"Found matching recipe: '{best_match}' with score {score}")
         return best_match
 
+def match_from_precalculated(dish_name, precalculated_df = precalculated_df):
+    recipe_names = list(precalculated_df['Food Name; name'])
+    best_match, score, _ = process.extractOne(dish_name, recipe_names, scorer=smart_score)
+    if score < 75:
+        print(f'Found no matching dish for {dish_name} in database. Closest match is {best_match}')
+        return None
+    else:
+        print(f"Found matching recipe: '{best_match}' with score {score}")
+        return best_match
+
+     
 def normalize(text):
     """
     Removes special characters, converts to lowercase, and standardizes whitespace
@@ -143,19 +169,20 @@ def normalize(text):
 
 def find_ingredient(name, nutrition_df=nutrition_df):
     """
-    Tries to match ingredient to an eisting ingredient in nutrition_df, returns name of ingredient if found 
+    Tries to match ingredient to an existing ingredient in nutrition_df, returns name of ingredient if found 
     """
     nutrition_df['Alternate Name; alt_name'] = nutrition_df['Alternate Name; alt_name'].fillna('').astype(str)
 
     original_clean = normalize(name)
-    food_names = nutrition_df['Food Name; name'].tolist()
-
+    name_lookup = dict(zip(
+    [normalize(n) for n in nutrition_df['Food Name; name']],
+    nutrition_df['Food Name; name']
+    ))
     # 1. Fuzzy match against normalized Food_Name using token_sort_ratio
-    match = process.extractOne(original_clean, food_names, scorer=fuzz.token_sort_ratio)
-    # print(match)
+    match = process.extractOne(original_clean, list(name_lookup.keys()), scorer=fuzz.token_sort_ratio)
 
-    if match and match[1] >= 80:  
-        return match[0]
+    if match and match[1] >= 80:
+        return name_lookup[match[0]]
 
     # 2. Fallback: check if the original name is a substring in Alternate_Name (case-insensitive)
     alt_match_row = nutrition_df[nutrition_df['Alternate Name; alt_name'].str.lower().str.contains(name.strip().lower(), regex=False)]
@@ -177,6 +204,22 @@ def get_matched_ingredient(dish_name, dishes_df, nutrition_df=nutrition_df):
         for i in l:
             ing_matched[i] = find_ingredient(i)
     return ing_matched
+
+def convert_unit(unit, ingredient, units_df=units_df):
+        """ Convert ingredient + unit to grams """
+        unit_rows = units_df[units_df['unit'].apply(lambda lst: unit in lst)]
+
+        if unit_rows.empty:
+            return None 
+
+        general_conversion = None
+        for idx, row in unit_rows.iterrows():
+            if ingredient and row['associated_ingredient'] and ingredient in row['associated_ingredient']:
+                return row['value']  
+            if not row['associated_ingredient']:
+                general_conversion = row['value']
+                
+        return general_conversion
 
 def add_to_nutrition(nutrition_dict, add_dict):
     for i in add_dict.items():
@@ -209,16 +252,18 @@ def calculate_nutrition(matched_dict, dish_name, dishes_df, nutrition_df=nutriti
             qty = ing_info['quantity']
             unit = ing_info['unit']
             est_g = ing_info['estimated_weight_in_grams']
-
-            if unit not in units_df['unit']: 
-                if est_g == 'NA':
+            
+            # if unit not in units_df['unit']: 
+            g_equivalent = convert_unit(unit, ing)
+            if not g_equivalent:
+                # if est_g == 'NA':
                     print(f'No way to get weight (in grams) of {ing}, unit is {unit}. Skipping in nutrition claculation')
                     continue 
-                else: 
-                    est_g = float(est_g)
-                    scale = est_g / 100
+                # else: 
+                #     est_g = float(est_g)
+                #     scale = est_g / 100
             else:
-                g_equivalent = units_df[units_df['unit'] == unit]['value']
+                # g_equivalent = units_df[units_df['unit'] == unit]['value']
                 grams = float(g_equivalent) * float(qty)
                 scale = grams / 100
 
@@ -246,11 +291,13 @@ def calculate_nutrition(matched_dict, dish_name, dishes_df, nutrition_df=nutriti
     return info_per_serving
     
 def calculate_nutrition_for_dish(dish_name, dishes_df=recipes_df, nutrition_df=nutrition_df, units_df=units_df):
-    """ Input a dish name, and get nutrition dicitionary """
+    """ Input a dish name, and calculate nutrition dicitionary """
     matched_dish = match_recipe(dish_name, dishes_df)
     if not matched_dish: return {}
 
-    try: matched_dict = get_matched_ingredient(matched_dish, dishes_df, nutrition_df)
+    try: 
+        matched_dict = get_matched_ingredient(matched_dish, dishes_df, nutrition_df)
+        print(matched_dict)
     except: 
         print(f'Error matching ingredient list for {matched_dish}')
         return {}
@@ -261,6 +308,18 @@ def calculate_nutrition_for_dish(dish_name, dishes_df=recipes_df, nutrition_df=n
     
     return nutrition_info
 
+def fetch_nutrition_for_dish(dish_name, precalculated_df=precalculated_df):
+    """ Input a dish name, and fetch nutrition dictionary, per 100gm """
+    matched_dish = match_from_precalculated(dish_name)
+    if not matched_dish: return {}
+
+    drop_cols = ['Dish Weight (g)', 'primarysource', 'Food Name; name']
+    dish_row = precalculated_df[precalculated_df['Food Name; name']==matched_dish]
+    dish_row = dish_row.drop(columns=drop_cols, errors='ignore')
+    matched_to = dish_row.iloc[0].to_dict()
+
+    return matched_to
+    
 def get_ingredients(dish_name, dishes_df=recipes_df, nutrition_df=nutrition_df, units_df=units_df):
     """ Get an ingredient list for the input dish_name """
     matched_dish = match_recipe(dish_name, dishes_df)
@@ -287,6 +346,64 @@ def get_matching_dishes(dish_name, k=2, dishes_df=recipes_df):
         return []
     else: return filtered_matches
 
+def parse_for_unit_conversion(line):
+    original_line = line.strip()
+    line = original_line
+
+    fraction_patterns = [
+        (r'^(one and a half|one and one half)', 1.5),
+        (r'^(two and a half|two and one half)', 2.5),
+        (r'^(three and a half|three and one half)', 3.5),
+        (r'^(a half|half)', 0.5),
+        (r'^(a quarter|quarter)', 0.25),
+        (r'^(three quarters|three-quarters)', 0.75),
+        (r'^(one third|a third)', 0.33),
+        (r'^(two thirds)', 0.67),
+    ]
+    
+    # Check fraction patterns first
+    for pattern, value in fraction_patterns:
+        match = re.match(pattern, line.lower())
+        if match:
+            matched_text = match.group(1)
+            # Find the actual text in original case
+            original_match = re.match(pattern, original_line, re.IGNORECASE)
+            if original_match:
+                line = original_line.replace(original_match.group(1), str(value), 1)
+                break
+    else:
+        # try word2number for simple numbers
+        word_number_pattern = re.match(r'^([a-zA-Z]+(?:\s+[a-zA-Z]+)*?)\s+(?=\w+)', original_line)
+        if word_number_pattern:
+            word_number = word_number_pattern.group(1).strip()
+            try:
+                quantity = w2n.word_to_num(word_number)
+                line = re.sub(r'^' + re.escape(word_number), str(quantity), original_line, count=1)
+            except ValueError:
+                pass  
+
+    # extract numeric quantity, unit, ingredient
+    match = re.match(r'(?P<number>\d+(?:\.\d+)?)\s*(?P<unit>\w+)\s+(?P<ingredient>.+)', line)
+    if match:  
+      def singularize(unit): return unit[:-1] if unit.endswith('s') else unit
+      number = float(match.group('number'))
+      unit = singularize(match.group('unit').lower())
+      ingredient = match.group('ingredient').strip()
+
+      return (number, unit, ingredient)
+
+    match = re.match(r'(?P<number>\d+(?:\.\d+)?)\s+(?P<ingredient>.+)', line)
+    if match:
+        number = float(match.group('number'))
+        ingredient = match.group('ingredient').strip()
+        return (number, 'count', ingredient)
+    
+    return None
+
+def convert_unit_to_grams(number, unit, ing):
+    base = convert_unit(unit, ing)
+    if base: return float(number) * base
+    else: return None
 
 # --- API Endpoints ---
 
@@ -405,11 +522,43 @@ def search_ingredient():
     """API endopint to fetch nearest ingredient match"""
     data = request.get_json()
     if not data or 'ingredients' not in data:
-        return jsonify({"error: Invalid requst. 'ingredients' not found in JSON body"})
+        return jsonify({"error": "Invalid request. 'ingredients' not found in JSON body"})
     
     ings = data['ingredients']
     matched_dict = {ing: find_ingredient(ing) for ing in ings}
     return matched_dict
+
+@app.route('/fetch_nutrition', methods = ['POST'])
+def fetch_nutrition():
+    """API endpoint to fetch precalculated nutrition information"""
+    data = request.get_json()
+    if not data or 'dish' not in data: return jsonify({"error": "Invalid request. 'ingredients' not found in JSON body"})
+    
+    dish = data['dish']
+    return fetch_nutrition_for_dish(dish)
+
+@app.route('/convert_to_grams', methods=['POST'])
+def convert_to_grams():
+    """API endpoint to convert natural langauge string to grams"""
+    data = request.get_json()
+    if not data or 'string_to_convert' not in data: return jsonify({"error": "Invalid request. 'string_to_convert' not found in JSON body"})
+
+    string_to_convert = data['string_to_convert']
+    if not parse_for_unit_conversion(string_to_convert): return jsonify({"error": "Parsing failed"})
+    number, unit, ingredient = parse_for_unit_conversion(string_to_convert)
+    conversion = convert_unit_to_grams(number, unit, ingredient)
+
+    if not conversion: return jsonify({"error": f"Conversion failed, no {unit} in DB"})
+    return jsonify({
+        "original": string_to_convert,
+        "parsed": {
+            "quantity": number,
+            "unit": unit,
+            "ingredient": ingredient
+        },
+        "grams": conversion
+    }) 
+    
 
 # --- Main Execution ---
 if __name__ == '__main__':
