@@ -12,7 +12,6 @@ app = FastAPI(
 
 FLASK_BACKEND_URL = "http://localhost:5000"
 
-
 # CLASSES 
 
 class DishRequest(BaseModel):
@@ -53,6 +52,26 @@ class IngredientSearchRequest(BaseModel):
 class IngredientSearchResponse(BaseModel):
     matched_ingredients: Dict[str, str]
 
+class FetchNutritionRequest(BaseModel):
+    dish: str
+
+class FetchNutritionResponse(BaseModel):
+    nutrition_data: Dict[str, Any]
+
+class ConvertToGramsRequest(BaseModel):
+    string_to_convert: str
+
+class ParsedData(BaseModel):
+    quantity: float
+    unit: str
+    ingredient: str
+
+class ConvertToGramsResponse(BaseModel):
+    original: str
+    parsed: ParsedData
+    grams: float
+
+
 # ENDPOINTS
 @app.post("/api/nutrition", response_model=NutritionResponse)
 async def get_nutrition(request: DishRequest):
@@ -71,9 +90,14 @@ async def get_nutrition(request: DishRequest):
                 raise HTTPException(status_code=404, detail=response.json()["error"])
             elif response.status_code != 200:
                 raise HTTPException(status_code=500, detail="Backend service error")
-                
-            return response.json()
             
+            # Print the response received from Flask backend
+            response_data = response.json()
+            print("Response received from Flask backend:")
+            print(response_data)
+            
+            return response_data
+                     
         except httpx.RequestError:
             raise HTTPException(status_code=503, detail="Backend service unavailable")
 
@@ -175,6 +199,56 @@ async def search_ingredients(request: IngredientSearchRequest):
         except httpx.RequestError:
             raise HTTPException(status_code=503, detail="Backend service unavailable")
 
+
+@app.post("/api/fetch_nutrition", response_model=FetchNutritionResponse)
+async def fetch_nutrition_data(request: FetchNutritionRequest):
+    """
+    Fetch precalculated nutrition information for a dish
+    """
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.post(
+                f"{FLASK_BACKEND_URL}/fetch_nutrition",
+                json={"dish": request.dish},
+                timeout=30.0
+            )
+            
+            if response.status_code == 404:
+                raise HTTPException(status_code=404, detail=response.json()["error"])
+            elif response.status_code != 200:
+                raise HTTPException(status_code=500, detail="Backend service error")
+                
+            nutrition_data = response.json()
+            return FetchNutritionResponse(nutrition_data=nutrition_data)
+            
+        except httpx.RequestError:
+            raise HTTPException(status_code=503, detail="Backend service unavailable")
+
+@app.post("/api/convert_to_grams", response_model=ConvertToGramsResponse)
+async def convert_to_grams(request: ConvertToGramsRequest):
+    """
+    Convert natural language string to grams
+    """
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.post(
+                f"{FLASK_BACKEND_URL}/convert_to_grams",
+                json={"string_to_convert": request.string_to_convert},
+                timeout=30.0
+            )
+            
+            if response.status_code == 404:
+                raise HTTPException(status_code=404, detail=response.json()["error"])
+            elif response.status_code != 200:
+                error_detail = response.json().get("error", "Backend service error")
+                raise HTTPException(status_code=400, detail=error_detail)
+                
+            return response.json()
+            
+        except httpx.RequestError:
+            raise HTTPException(status_code=503, detail="Backend service unavailable")
+
+
 @app.get("/health")
 async def health_check():
     """
@@ -205,7 +279,11 @@ async def root():
         "endpoints": [
             "POST /api/nutrition",
             "POST /api/ingredients", 
-            "POST /api/autocomplete"
+            "POST /api/autocomplete",
+            "POST /api/agg_nutrition",
+            "POST /api/ingredient_search",
+            "POST /api/fetch_nutrition",
+            "POST /api/convert_to_grams"
         ]
     }
 
