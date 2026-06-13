@@ -6,6 +6,7 @@
 5. write any new ingredients looked up to the master db
 '''
 
+import os
 from rapidfuzz import process, fuzz
 from flask import jsonify
 import re
@@ -18,10 +19,13 @@ from word2number import w2n
 
 app = Flask(__name__)
 
-RECIPES_PATH = r"C:\Users\Anurav\Research\FoodComputing\foodComputingNutrition-main\foodComputingNutrition-main\recipes.pkl" # PATH TO PKL (see misc to get pkl from jsonl)
-UNITS_PATH = r"C:\Users\Anurav\Research\FoodComputing\foodComputingNutrition-main\foodComputingNutrition-main\units.xlsx" 
-INGREDIENTS_PATH = r"C:\Users\Anurav\Research\FoodComputing\foodComputingNutrition-main\foodComputingNutrition-main\fct.xlsx"
-PRECALCULATED_PATH = r"C:\Users\Anurav\Research\FoodComputing\master_dishes_nutrition_per_100g.xlsx"
+# Base directory of the script
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+RECIPES_PATH = os.path.join(BASE_DIR, "recipes.pkl") # PATH TO PKL (see misc to get pkl from jsonl)
+UNITS_PATH = os.path.join(BASE_DIR, "units.xlsx") 
+INGREDIENTS_PATH = os.path.join(BASE_DIR, "fct.xlsx")
+PRECALCULATED_PATH = os.path.join(BASE_DIR, "master_dishes_nutrition_per_100g.xlsx")
 
 recipes_df = pd.read_pickle(RECIPES_PATH)
 units_df = pd.read_excel(UNITS_PATH)
@@ -247,12 +251,22 @@ def calculate_nutrition(matched_dict, dish_name, dishes_df, nutrition_df=nutriti
     
     for i in dish_row['ingredient_description'].values[0]:
         for ing in i['items']:
-            ing_in_df = matched_dict[ing]
+            ing_in_df = matched_dict.get(ing)
+            if ing_in_df is None:
+                ing_in_df = find_ingredient(ing)
+                matched_dict[ing] = ing_in_df
+
             ing_info = i['items'][ing]
             qty = ing_info['quantity']
             unit = ing_info['unit']
             est_g = ing_info['estimated_weight_in_grams']
             
+            try:
+                qty_val = float(qty)
+            except (ValueError, TypeError):
+                print(f"Skipping '{ing}' due to invalid or unspecified quantity: {qty}")
+                continue
+
             # if unit not in units_df['unit']: 
             g_equivalent = convert_unit(unit, ing)
             if not g_equivalent:
@@ -264,7 +278,7 @@ def calculate_nutrition(matched_dict, dish_name, dishes_df, nutrition_df=nutriti
                 #     scale = est_g / 100
             else:
                 # g_equivalent = units_df[units_df['unit'] == unit]['value']
-                grams = float(g_equivalent) * float(qty)
+                grams = float(g_equivalent) * qty_val
                 scale = grams / 100
 
             if ing_in_df == 'NA':
@@ -562,5 +576,5 @@ def convert_to_grams():
 
 # --- Main Execution ---
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
-# visit http://localhost:8000/docs#/
+    app.run(host='0.0.0.0', port=3000, debug=True)
+# visit http://localhost:3000/docs#/

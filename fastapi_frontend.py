@@ -10,7 +10,7 @@ app = FastAPI(
     version="1.0.0"
 )
 
-FLASK_BACKEND_URL = "http://localhost:5000"
+FLASK_BACKEND_URL = "http://localhost:3000"
 
 # CLASSES 
 
