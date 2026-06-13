@@ -1,5 +1,4 @@
 # Large data files
-recipes.pkl
 recipes.jsonl
 
 # Python virtual environment
