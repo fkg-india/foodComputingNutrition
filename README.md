@@ -1,104 +1,110 @@
-# Food Computing Nutrition Microservices
+# Food Computing Nutrition API
 
-A dual-framework (Flask + FastAPI) backend application designed to calculate detailed nutritional composition for culinary dishes. The system uses a local database of ingredients (Food Composition Table) and falls back to the external **Nutritionix API** for unknown ingredients.
+A unified FastAPI backend service for calculating detailed nutritional composition of culinary dishes. The system fuzzy-matches dish names to a recipe database, resolves ingredients against a local Food Composition Table (FCT), and falls back to the **Nutritionix API** for unknown ingredients.
 
 ---
 
 ## 🏗 Architecture Overview
 
-The project is structured as a two-tier microservice architecture:
+The project runs as a single FastAPI service with a clean separation between routing, schemas, and business logic:
 
 ```mermaid
 graph TD
-    Client[Client / API User] -->|HTTP POST/GET| FastAPI[FastAPI Frontend / Gateway <br> Port 8000]
-    FastAPI -->|HTTP Proxy requests| Flask[Flask Logic Engine <br> Port 5001]
-    Flask -->|Fuzzy Match| Recipes[(recipes.pkl)]
-    Flask -->|Unit Conversion| Units[(units.xlsx)]
-    Flask -->|Local Nutrient Lookup| FCT[(fct.xlsx)]
-    Flask -->|Precalculated Lookup| MasterDishes[(master_dishes_nutrition_per_100g.xlsx)]
-    Flask -->|Fallback API Query| Nutritionix[Nutritionix API]
-    Flask -->|Save New Ingredients| FCT
+    Client[Client / API User] -->|HTTP POST/GET| FastAPI[FastAPI Service<br>Port 8000]
+    FastAPI -->|Fuzzy Match| Recipes[(recipes.pkl)]
+    FastAPI -->|Unit Conversion| Units[(units.xlsx)]
+    FastAPI -->|Local Nutrient Lookup| FCT[(fct.xlsx)]
+    FastAPI -->|Precalculated Lookup| MasterDishes[(master_dishes_nutrition_per_100g.xlsx)]
+    FastAPI -->|Fallback API Query| Nutritionix[Nutritionix API]
+    FastAPI -->|Save New Ingredients| FCT
 ```
 
-1. **FastAPI Gateway (`fastapi_frontend.py`) [Port 8000]**: 
-   - Provides strict type validation using `Pydantic`.
-   - Offers interactive Swagger API documentation at `/docs`.
-   - Proxies incoming calls to the Flask backend asynchronously using `httpx`.
-2. **Flask Calculation Engine (`cal_new.py`) [Port 5001]**:
-   - Contains all matching algorithms, parsing logic, and unit conversions.
-   - Performs fuzzy search matching on dish names and ingredients.
-   - Integrates with the external Nutritionix API.
-   - Saves newly discovered ingredients back to the local `fct.xlsx` Excel database.
+**Key components:**
+- **Routers** (`backend/app/routers/nutrition.py`): Request validation, error handling, and HTTP response shaping.
+- **Schemas** (`backend/app/schemas.py`): Pydantic models enforcing strict type contracts on all inputs and outputs.
+- **Calculator Service** (`backend/app/services/calculator.py`): All matching algorithms, parsing logic, unit conversions, and Nutritionix integration.
 
 ---
 
-## 📂 Project Structure & Databases
+## 📂 Project Structure
 
-*   [cal_new.py](file:///Users/manishyadav/Documents/work/KCDHA/food-computing/foodComputingNutrition/cal_new.py): Flask application. Runs calculations and exposes internal endpoints on port 5001.
-*   [fastapi_frontend.py](file:///Users/manishyadav/Documents/work/KCDHA/food-computing/foodComputingNutrition/fastapi_frontend.py): FastAPI application. Exposes client-facing endpoints on port 8000.
-*   `fct.xlsx` *(Food Composition Table)*: Local database containing nutritional breakdown per 100g of various raw ingredients.
-*   `units.xlsx`: Unit conversion table containing volume/weight conversions (e.g. cup, tsp to grams) associated with specific ingredients or generic fallbacks.
-*   `master_dishes_nutrition_per_100g.xlsx`: Database containing precalculated nutrition details per 100g of fully prepared dishes.
-*   `recipes.pkl` **(Required - Not included in Repo)**: Pickled Pandas DataFrame containing dish names, ingredients, and servings details. **You must acquire this file and place it in the project root directory before running the project.**
+```
+foodComputingNutrition/
+├── backend/
+│   ├── app/
+│   │   ├── __init__.py
+│   │   ├── main.py                    # FastAPI app entrypoint
+│   │   ├── schemas.py                 # Pydantic request/response models
+│   │   ├── routers/
+│   │   │   ├── __init__.py
+│   │   │   └── nutrition.py           # All API route handlers
+│   │   └── services/
+│   │       ├── __init__.py
+│   │       └── calculator.py          # Business logic & dataset loaders
+│   └── requirements.txt               # Python dependencies
+├── fct.xlsx                            # Food Composition Table (nutrients per 100g)
+├── units.xlsx                          # Unit-to-gram conversion table
+├── recipes.pkl                         # Recipe database (required, not in repo)
+├── master_dishes_nutrition_per_100g.xlsx  # Precalculated dish nutrition
+└── README.md
+```
+
+### Data Files
+
+| File | Description |
+|---|---|
+| `fct.xlsx` | Local database of nutritional breakdown per 100g of raw ingredients. Grows automatically when the Nutritionix fallback discovers new ingredients. |
+| `units.xlsx` | Unit conversion table mapping volume/weight units (cup, tsp, tbsp, oz, etc.) to grams, with optional ingredient-specific overrides. |
+| `recipes.pkl` | Pickled Pandas DataFrame containing dish names, ingredient lists, quantity descriptions, and servings. **Required — not included in repo.** |
+| `master_dishes_nutrition_per_100g.xlsx` | Precalculated nutrition per 100g of fully prepared dishes for fast lookup. |
 
 ---
 
 ## 🛠 Setup & Installation
 
 ### 1. Prerequisites
-Ensure you have **Python 3.9+** installed on your system.
+- **Python 3.10+** installed on your system.
+- `recipes.pkl` placed in the project root directory.
 
-### 2. Prepare `recipes.pkl`
-This project depends on a `recipes.pkl` file (which is loaded on startup in `cal_new.py`). Ensure you place the `recipes.pkl` file in the root of the project directory.
-
-### 3. Create a Virtual Environment
-It is highly recommended to use a virtual environment to manage dependencies:
+### 2. Create a Virtual Environment
 
 ```bash
-# Create environment
 python -m venv venv
 
-# Activate environment (macOS/Linux)
+# Activate (macOS/Linux)
 source venv/bin/activate
 
-# Activate environment (Windows Command Prompt)
+# Activate (Windows)
 # venv\Scripts\activate
 ```
 
-### 4. Install Dependencies
-Install the required packages using the generated `requirements.txt`:
+### 3. Install Dependencies
 
 ```bash
-pip install -r requirements.txt
+pip install -r backend/requirements.txt
 ```
 
 ---
 
 ## 🚀 Running the Project
 
-Both microservices must run concurrently. Open two separate terminal windows (with your virtual environment activated):
+Single command, single terminal:
 
-### Terminal 1: Start the Flask Calculation Engine
 ```bash
-python cal_new.py
+python -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8000
 ```
-*Runs on `http://localhost:5001`*
 
-### Terminal 2: Start the FastAPI API Gateway
-```bash
-python fastapi_frontend.py
-```
-*Runs on `http://localhost:8000` (Access interactive docs at http://localhost:8000/docs)*
+*Access interactive Swagger docs at [http://localhost:8000/docs](http://localhost:8000/docs)*
 
 ---
 
 ## 🔌 API Endpoints & Input/Output Schemas
 
-All FastAPI gateway requests should be sent to `http://localhost:8000`.
+All endpoints are prefixed with `/api/v1/nutrition`. Send requests to `http://localhost:8000`.
 
-### 1. Calculate Dish Nutrition
-Calculates the full nutritional profile for a dish by analyzing its recipe ingredients, scaling them by weight, and dividing by servings.
-*   **Endpoint:** `POST /api/nutrition`
+### 1. Dish Nutrition (Combined)
+Matches a dish, returns its ingredient mapping AND per-serving nutrition in a single payload.
+*   **Endpoint:** `POST /api/v1/nutrition/dish`
 *   **Request Body (JSON):**
     ```json
     {
@@ -108,20 +114,23 @@ Calculates the full nutritional profile for a dish by analyzing its recipe ingre
 *   **Response (JSON):**
     ```json
     {
-      "matched_dish_name": "Paneer Tikka",
+      "matched_dish_name": "Achari Paneer Tikka",
+      "ingredients": {
+        "Paneer": "Paneer",
+        "Mustard oil": "Mustard oil",
+        "Onion": "Onion, big"
+      },
       "nutrition_per_serving": {
-        "Energy; enerc": 320.5,
-        "Total Fat; fatce": 18.2,
-        "Protein; protcnt": 15.1,
-        "Carbohydrate; choavldf": 8.4
-        // ... (other nutritional parameters)
+        "Energy; enerc": 764.76,
+        "Total Fat; fatce": 50.33,
+        "Protein; protcnt": 55.77
       }
     }
     ```
 
-### 2. Get Dish Ingredients
-Retrieves the ingredient mapping showing how raw recipe ingredients are matched with items in the Food Composition Table database.
-*   **Endpoint:** `POST /api/ingredients`
+### 2. Calculate Nutrition Only
+Calculates per-serving nutrition without returning the ingredient mapping.
+*   **Endpoint:** `POST /api/v1/nutrition/nutrition`
 *   **Request Body (JSON):**
     ```json
     {
@@ -131,66 +140,87 @@ Retrieves the ingredient mapping showing how raw recipe ingredients are matched 
 *   **Response (JSON):**
     ```json
     {
-      "matched_dish_name": "Paneer Tikka",
+      "matched_dish_name": "Achari Paneer Tikka",
+      "nutrition_per_serving": {
+        "Energy; enerc": 764.76,
+        "Total Fat; fatce": 50.33,
+        "Protein; protcnt": 55.77
+      }
+    }
+    ```
+
+### 3. Get Dish Ingredients
+Retrieves the ingredient mapping showing how raw recipe ingredients are matched to the FCT database.
+*   **Endpoint:** `POST /api/v1/nutrition/ingredients`
+*   **Request Body (JSON):**
+    ```json
+    {
+      "dish_name": "Paneer Tikka"
+    }
+    ```
+*   **Response (JSON):**
+    ```json
+    {
+      "matched_dish_name": "Achari Paneer Tikka",
       "ingredients": {
-        "paneer cubes": "Cottage cheese, paneer",
+        "Paneer": "Paneer",
+        "Mustard oil": "Mustard oil",
         "yogurt": "Yogurt, plain, whole milk"
       }
     }
     ```
 
-### 3. Autocomplete Dish
-Performs fuzzy search against the recipe database and returns the top 3 closest matches with matching scores.
-*   **Endpoint:** `POST /api/autocomplete`
+### 4. Autocomplete Dish
+Performs fuzzy search against the recipe database and returns the top 3 closest matches with scores.
+*   **Endpoint:** `POST /api/v1/nutrition/autocomplete`
 *   **Request Body (JSON):**
     ```json
     {
-      "dish_name": "paner tika"
+      "dish_name": "paneer tikka"
     }
     ```
 *   **Response (JSON):**
     ```json
     {
-      "input_dish_name": "paner tika",
-      "matched_dish_name": "Paneer Tikka",
-      "match_score": 85.0,
+      "input_dish_name": "paneer tikka",
+      "matched_dish_name": "Achari Paneer Tikka",
+      "match_score": 87.0,
       "top_matches": [
-        { "name": "Paneer Tikka", "score": 85.0 },
-        { "name": "Paneer Butter Masala", "score": 62.0 },
-        { "name": "Chicken Tikka", "score": 58.0 }
+        { "name": "Achari Paneer Tikka", "score": 87.0 },
+        { "name": "Hariyali Paneer Tikka (Stovetop & Oven)", "score": 83.3 },
+        { "name": "Paneer Tikka Shashlik: Grilled Paneer Tikka Skewers", "score": 83.3 }
       ]
     }
     ```
 
-### 4. Aggregated Nutrition for Multiple Dishes
-Calculates the combined nutritional totals for a list of dishes.
-*   **Endpoint:** `POST /api/agg_nutrition`
+### 5. Aggregated Nutrition for Multiple Dishes
+Calculates the combined nutritional totals for a list of dishes, reporting any that could not be matched.
+*   **Endpoint:** `POST /api/v1/nutrition/aggregate`
 *   **Request Body (JSON):**
     ```json
     {
-      "dishes": ["Paneer Tikka", "Butter Naan"]
+      "dishes": ["Paneer Tikka", "Biryani"]
     }
     ```
 *   **Response (JSON):**
     ```json
     {
       "matched_dish_names": {
-        "Paneer Tikka": "Paneer Tikka",
-        "Butter Naan": "Naan, buttered"
+        "Paneer Tikka": "Achari Paneer Tikka",
+        "Biryani": "Chettinad Kathirikai Chops Recipe - Brinjal Curry for Biryani"
       },
       "nutrition_per_serving": {
-        "Energy; enerc": 580.2,
-        "Total Fat; fatce": 25.8,
-        "Protein; protcnt": 21.3
-        // ... (combined totals)
+        "Energy; enerc": 1045.78,
+        "Total Fat; fatce": 89.47,
+        "Protein; protcnt": 66.71
       },
       "skipped_dishes": []
     }
     ```
 
-### 5. Fetch Precalculated Nutrition
-Retrieves the pre-computed nutritional breakdown per 100g of a dish directly from `master_dishes_nutrition_per_100g.xlsx`.
-*   **Endpoint:** `POST /api/fetch_nutrition`
+### 6. Fetch Precalculated Nutrition
+Retrieves the pre-computed nutritional breakdown per 100g directly from `master_dishes_nutrition_per_100g.xlsx`.
+*   **Endpoint:** `POST /api/v1/nutrition/fetch`
 *   **Request Body (JSON):**
     ```json
     {
@@ -201,17 +231,35 @@ Retrieves the pre-computed nutritional breakdown per 100g of a dish directly fro
     ```json
     {
       "nutrition_data": {
-        "Energy; enerc": 150.0,
-        "Protein; protcnt": 5.4,
-        "Total Fat; fatce": 4.1
-        // ... (nutrients per 100g)
+        "Energy; enerc": 99.27,
+        "Protein; protcnt": 8.27,
+        "Total Fat; fatce": 9.01
       }
     }
     ```
 
-### 6. Convert Natural Language Unit to Grams
-Parses natural language ingredient quantities (e.g. "one and a half cups") and converts them into weight in grams.
-*   **Endpoint:** `POST /api/convert_to_grams`
+### 7. Ingredient Search
+Matches a list of raw ingredient names to the nearest entries in the FCT database.
+*   **Endpoint:** `POST /api/v1/nutrition/ingredient-search`
+*   **Request Body (JSON):**
+    ```json
+    {
+      "ingredients": ["paneer", "garlic paste"]
+    }
+    ```
+*   **Response (JSON):**
+    ```json
+    {
+      "matched_ingredients": {
+        "paneer": "Paneer",
+        "garlic paste": "garlic paste"
+      }
+    }
+    ```
+
+### 8. Convert Natural Language Unit to Grams
+Parses natural language ingredient quantities (e.g., "one and a half cups flour") and converts them into weight in grams.
+*   **Endpoint:** `POST /api/v1/nutrition/convert-to-grams`
 *   **Request Body (JSON):**
     ```json
     {
@@ -227,49 +275,31 @@ Parses natural language ingredient quantities (e.g. "one and a half cups") and c
         "unit": "cup",
         "ingredient": "flour"
       },
-      "grams": 180.0
-    }
-    ```
-
-### 7. Ingredient Search
-Provides matches from the database for a raw list of ingredients.
-*   **Endpoint:** `POST /api/ingredient_search`
-*   **Request Body (JSON):**
-    ```json
-    {
-      "ingredients": ["paneer", "garlic paste"]
-    }
-    ```
-*   **Response (JSON):**
-    ```json
-    {
-      "matched_ingredients": {
-        "paneer": "Cottage cheese, paneer",
-        "garlic paste": "Garlic, raw"
-      }
+      "grams": 360.0
     }
     ```
 
 ---
 
-## ⚙️ Developer Notes & Code Modifiers
-
-When working on modifications to this project, keep the following guidelines in mind:
+## ⚙️ Developer Notes
 
 ### Fuzzy Matching Thresholds
-- Fuzzy search matches are powered by `rapidfuzz`. The threshold for matching dishes (in `match_recipe` and `match_from_precalculated`) is set to **75** by default.
-- The ingredient matcher (`find_ingredient`) matches names with token sort ratio >= **80**. If no match meets this threshold, it falls back to a case-insensitive substring search inside the `Alternate Name; alt_name` column of `fct.xlsx`.
+- Dish matching (`match_recipe`, `match_from_precalculated`) uses a composite scorer (`smart_score`) that takes the best of `fuzz.ratio`, `token_sort_ratio`, `token_set_ratio`, and `partial_ratio`. Minimum threshold: **75**.
+- Ingredient matching (`find_ingredient`) uses `token_sort_ratio` with a threshold of **80**. Falls back to case-insensitive substring search in the `Alternate Name; alt_name` column of `fct.xlsx`.
 
 ### Database Writes on API Calls
-- Calling `POST /api/nutrition` or `POST /api/agg_nutrition` calls `calculate_nutrition_for_dish()`, which automatically writes the local state of `nutrition_df` back to `fct.xlsx` via `nutrition_df.to_excel(INGREDIENTS_PATH, index=False)`. Ensure the script has read and write permissions in the workspace directory.
+- Endpoints that trigger `calculate_nutrition_for_dish()` — specifically `/dish`, `/nutrition`, and `/aggregate` — write the in-memory `nutrition_df` back to `fct.xlsx` after each call via `save_nutrition_db()`. This persists any new ingredients discovered via Nutritionix. Ensure the process has write permissions to the project root.
 
 ### External API Keys & Rate Limits
-- When the local database `fct.xlsx` does not have an ingredient, the calculation engine sends a POST query to the Nutritionix API.
-- If you start running into **Nutritionix rate limit errors**, register for a free API key at [developer.nutritionix.com](https://developer.nutritionix.com/) and update the following lines in [cal_new.py](file:///Users/manishyadav/Documents/work/KCDHA/food-computing/foodComputingNutrition/cal_new.py):
+- When the local FCT does not have an ingredient, the calculator service sends a POST request to the Nutritionix API.
+- If you encounter **401 or rate limit errors**, register for a free API key at [developer.nutritionix.com](https://developer.nutritionix.com/) and update the following constants in `backend/app/services/calculator.py`:
   ```python
-  headers = {
-      'Content-Type': 'application/json',
-      'x-app-id': 'YOUR_APP_ID',
-      'x-app-key': 'YOUR_APP_KEY'
+  _NUTRITIONIX_HEADERS = {
+      "Content-Type": "application/json",
+      "x-app-id": "YOUR_APP_ID",
+      "x-app-key": "YOUR_APP_KEY",
   }
   ```
+
+### Data File Resolution
+- All data files (`recipes.pkl`, `fct.xlsx`, `units.xlsx`, `master_dishes_nutrition_per_100g.xlsx`) are resolved relative to the project root using `Path(__file__).resolve().parents[3]` from inside `calculator.py`. No environment variables or hardcoded absolute paths are needed.
